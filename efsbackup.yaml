@@ -16,23 +16,11 @@ Parameters:
     Description: Availability Zone. Must match the PublicSubnet
     Type: 'AWS::EC2::AvailabilityZone::Name'
     ConstraintDescription: Must match the AZ of the selected subnet.
-  BatchAMI:
-    Description: AMI used by the batch server. AMI is to be pre-baked and based on the Web Server.
-    Type: String
-    Default: 'ami-23a5125b'
-  WebServerAMI: 
-    Description: AMI used by the web server. AMI is to be pre-baked.
-    Type: String
-    Default: 'ami-896e10f1'
   KeyName:
     Description: Name of an existing EC2 KeyPair to enable SSH access to the instance
     Type: 'AWS::EC2::KeyPair::KeyName'
     ConstraintDescription: must be the name of an existing EC2 KeyPair.
-  MyWAFACLId:
-    Default: 'd378d4ac-ba7a-43b5-8b98-268bc16ecfb8'
-    Type: String
-    Description: WebACLId of the WAF. See aws waf-regional list-web-acls --region <region>
-  BatchInstanceType:
+  InstanceType:
     Description: Backup Server. This server runs tasks such as nightly backups. An m4.large with Spot pricing is recommended to take advantage of faster network performance.
     Type: String
     Default: m5.large
@@ -126,7 +114,7 @@ Mappings:
       Spot: "0.0900"
 Resources:
   AMIInfo:
-    Type: 'Custom::AMIInfo',
+    Type: 'Custom::AMIInfo'
     Properties:
       ServiceToken: !GetAtt AMIInfoFunction.Arn
       Region: !Ref 'AWS::Region'
@@ -140,19 +128,21 @@ Resources:
     Properties:
       Code:
         S3Bucket: !Ref S3Bucket
-        S3Key: !Ref S3Key
-        Handler: !Join
-          - ''
-          - - !Ref ModuleName
-            - '.handler'
-        Role: !GetAtt LambdaExecutionRole.Arn        
-        Runtime: 'nodejs',
-        Timeout: 30
+        S3Key: 
+          Fn::Join:
+            - '/'
+            - - !Ref S3Folder
+              - 'amilookup.zip'
+      Handler: amilookup.handler
+      FunctionName: amilookup
+      Role: !GetAtt LambdaExecutionRole.Arn        
+      Runtime: 'nodejs'
+      Timeout: 30
   LambdaExecutionRole:
     Type: 'AWS::IAM::Role'
     Properties:
       AssumeRolePolicyDocument:
-        Version: '2012-10-17',
+        Version: '2012-10-17'
         Statement:
           Effect: Allow,
           Principal: 
@@ -185,7 +175,7 @@ Resources:
       Region: !Ref 'AWS::Region'
       Architecture: !FindInMap 
         - AWSInstanceType2Arch
-        - !Ref BatchInstanceType
+        - !Ref InstanceType
         - Arch
       Version: amzn
   WebServerProfile:
@@ -367,20 +357,6 @@ Resources:
               - 'arn:aws:sns:us-west-2:057396483943:BatchStatus'
       Roles:
         - !Ref BatchRole 
-  BatchAMIInfo:
-    Type: 'Custom::AMIInfo'
-    Properties:
-      ServiceToken: !Join 
-        - ''
-        - - 'arn:aws:lambda:'
-          - !Ref 'AWS::Region'
-          - ':057396483943:function:AMIInfo'
-      Region: !Ref 'AWS::Region'
-      Architecture: !FindInMap 
-        - AWSInstanceType2Arch
-        - !Ref BatchInstanceType
-        - Arch
-      Version: amzn
   BatchSecurityGroup:
     Type: 'AWS::EC2::SecurityGroup'
     Properties:
@@ -406,15 +382,15 @@ Resources:
   BatchLC:
     Type: 'AWS::AutoScaling::LaunchConfiguration'
     Properties:
-      InstanceType: !Ref BatchInstanceType
+      InstanceType: !Ref InstanceType
       IamInstanceProfile: !Ref BatchProfile
       KeyName: !Ref KeyName
-      ImageId: !Ref BatchAMI 
+      ImageId: !GetAtt AMIInfo.Id
       SecurityGroups:
         - !Ref BatchSecurityGroup
       SpotPrice: !FindInMap 
         - SpotBidPrice
-        - !Ref BatchInstanceType
+        - !Ref InstanceType
         - Spot  
       UserData: !Base64
         Fn::Join:
@@ -483,7 +459,7 @@ Metadata:
       - Label:
           default: Backup Server EC2 Configuration
         Parameters:
-          - BatchInstanceType
+          - InstanceType
           - BatchAMI
       - Label:
           default: Lambda Configuration
