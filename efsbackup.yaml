@@ -4,18 +4,6 @@ Parameters:
     Description: VPC to launch in.
     Type: 'AWS::EC2::VPC::Id'
     ConstraintDescription: Must be the id of an existing VPC.
-  InstanceSubnets:
-    Description: A list of subnet identifiers of Amazon Virtual Private Cloud (Amazon VPCs). The subnets that you specify for VPCZoneIdentifier must reside in the Availability Zones that you specify with the AvailabilityZones parameter.
-    Default: "subnet-db5b58b3,subnet-da5b58b2,subnet-d95b58b1"
-    Type: 'List<AWS::EC2::Subnet::Id>'
-  PublicSubnet:
-    Description: Public subnet ID.
-    Type: 'AWS::EC2::Subnet::Id'
-    ConstraintDescription: Must be the id of an existing public subnet.
-  PublicAZ:
-    Description: Availability Zone. Must match the PublicSubnet
-    Type: 'AWS::EC2::AvailabilityZone::Name'
-    ConstraintDescription: Must match the AZ of the selected subnet.
   KeyName:
     Description: Name of an existing EC2 KeyPair to enable SSH access to the instance
     Type: 'AWS::EC2::KeyPair::KeyName'
@@ -37,6 +25,9 @@ Parameters:
       - m3.medium
       - m4.large
       - m5.large
+  InstanceSubnets:
+    Description: A list of subnet identifiers for subnets with EFS endpoints for your EFS file system.
+    Type: 'List<AWS::EC2::Subnet::Id>'
   SSHLocation:
     Description: ' The IP address range that can be used to SSH to the EC2 instances'
     Type: String
@@ -44,23 +35,16 @@ Parameters:
     MaxLength: '18'
     AllowedPattern: '(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})'
     ConstraintDescription: must be a valid IP CIDR range of the form x.x.x.x/x.
-  # TO DO: change this so just a name is provided and interpolate the ARN
-  SNSBatchTopic:
-    Description: SNS Topic ARN to use for notifications regarding batch process, such as backups.
-    Type: String
-    Default: 'arn:aws:sns:us-west-2:123412341234:BatchStatus'
   S3Bucket:
     Description: 'The name of the bucket that contains your lambda source code'
     Type: String
   S3Folder: 
     Description: 'The folder where you loaded the source for the functions.'
     Type: String
-    Default: 'Lambda_source'
-  # TO DO: Get the source fromn 
-  BatchScaleInZip: 
-    Description: 'The name of the CRRMonitor source file. Note that the file contained within must match the name of the handler.'
+    Default: 'efsbackup'
+  EFSSecurityGroup: 
+    Description: 'The name of the existing SecurityGroup that allows ingress to EFS'
     Type: String
-    Default: 'BatchScaleIn.zip'
 Mappings:
   AWSInstanceType2Arch:
     t2.nano:
@@ -134,71 +118,37 @@ Resources:
             - - !Ref S3Folder
               - 'amilookup.zip'
       Handler: amilookup.handler
-      FunctionName: amilookup
       Role: !GetAtt LambdaExecutionRole.Arn        
-      Runtime: 'nodejs'
+      Runtime: 'nodejs8.10'
       Timeout: 30
   LambdaExecutionRole:
     Type: 'AWS::IAM::Role'
     Properties:
       AssumeRolePolicyDocument:
-        Version: '2012-10-17'
+        Version: 2012-10-17
         Statement:
-          Effect: Allow,
-          Principal: 
-            Service: 'lambda.amazonaws.com'
-            Action: 'sts:AssumeRole'
-      Path: '/'
-      Policies:
-        PolicyName: 'root'
-        PolicyDocument:
-          Version: '2012-10-17'
-          Statement:
-            Effect: Allow
-            Action: 
-              - 'logs:CreateLogGroup'
-              - 'logs:CreateLogStream'
-              - 'logs:PutLogEvents'
-            Resource: 'arn:aws:logs:*:*:*'
-            Effect: Allow
-            Action: 
-              - 'ec2:DescribeImages'
-            Resource: '*'
-  BatchServerAMIInfo:
-    Type: 'Custom::AMIInfo'
-    Properties:
-      ServiceToken: !Join 
-        - ''
-        - - 'arn:aws:lambda:'
-          - !Ref 'AWS::Region'
-          - ':123412341234:function:AMIInfo'
-      Region: !Ref 'AWS::Region'
-      Architecture: !FindInMap 
-        - AWSInstanceType2Arch
-        - !Ref InstanceType
-        - Arch
-      Version: amzn
-  WebServerProfile:
-    Type: "AWS::IAM::InstanceProfile"
-    Properties:
-      Path: "/"
-      Roles:
-        - 
-          !Ref "WebServerRole"
-  WebServerRole:
-    Type: 'AWS::IAM::Role'
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          -
-            Effect: "Allow"
+          - Effect: Allow
             Principal:
               Service:
-                - "ec2.amazonaws.com"
+                - lambda.amazonaws.com
             Action:
-              - "sts:AssumeRole"
-      Path: "/"
+              - 'sts:AssumeRole'
+      Path: /
+      Policies:
+        - PolicyName: root
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: 'arn:aws:logs:*:*:*'
+              - Effect: Allow
+                Action:
+                  - 'ec2:DescribeImages'
+                Resource: '*'
   BatchProfile:
     Type: "AWS::IAM::InstanceProfile"
     Properties:
@@ -273,18 +223,27 @@ Resources:
             Action:
               - 's3:Get*'
               - 's3:List*'
-            Resource:
-              - 'arn:aws:s3:::example-com/web-server-config/*'
+            Resource: !Join
+              - ''
+              - - 'arn:aws:s3:::'
+                - !Ref S3Bucket
+                - '/'
+                - !Ref S3Folder
+                - '/*'
           - Sid: EFSBackupS3BucketActions
             Effect: Allow
             Action:
               - 's3:ListBucket'
-            Resource:
-              - 'arn:aws:s3:::example-com'
+            Resource: !Join
+              - ''
+              - - 'arn:aws:s3:::'
+                - !Ref S3Bucket
             Condition:
               StringLike:
-                's3:prefix':
-                  - 'web-server-config/*'
+                's3:prefix': !Join
+                  - ''
+                  - - !Ref S3Folder
+                    - '/*'
       Roles:
         - !Ref BatchRole
   WebsiteRW:
@@ -374,7 +333,7 @@ Resources:
   BatchEFSIngress:
     Type: 'AWS::EC2::SecurityGroupIngress'
     Properties:
-      GroupName: 'EFSBackup'
+      GroupName: !Ref EFSSecurityGroup
       IpProtocol: tcp
       FromPort: '2049'
       ToPort: '2049'
@@ -392,20 +351,14 @@ Resources:
         - SpotBidPrice
         - !Ref InstanceType
         - Spot  
-      UserData: !Base64
-        Fn::Join:
-          - ''
-          - - |
-              #!/bin/bash
-            - |
-              yum update -y
-            - |
-              aws s3 cp s3://example-com/web-server-config/server_v7/dailybackups.sh /tmp
-            - |
-              chmod u+x /tmp/dailybackups.sh
-            - '/tmp/dailybackups.sh '
-            - !Ref SNSBatchTopic
-            - |+
+      UserData: 
+        Fn::Base64: 
+          !Sub |
+            #!/bin/bash -xe
+            yum update -y aws-cfn-bootstrap
+            aws s3 cp s3://${S3Bucket}/${S3Folder}/dailybackups.sh /tmp
+            chmod u+x /tmp/dailybackups.sh
+            /tmp/dailybackups.sh ${BatchNotifyTopic}
 
   BatchASG:
     Type: 'AWS::AutoScaling::AutoScalingGroup'
@@ -422,8 +375,7 @@ Resources:
     Properties: 
       AutoScalingGroupName: !Ref BatchASG
       DesiredCapacity: 1
-      Recurrence: "0 5 * * *"
-
+      Recurrence: '0 5 * * *'
   BatchScaleInLambda: 
       Type: AWS::Lambda::Function
       Properties:
@@ -433,9 +385,8 @@ Resources:
             Fn::Join:
               - '/'
               - - !Ref S3Folder
-                - !Ref BatchScaleInZip
+                - 'BatchScaleIn.zip'
         Handler: BatchScaleIn.lambda_handler
-        FunctionName: BatchScaleIn
         Role: 
           Fn::GetAtt: 
             - ASGMgrRole
@@ -447,6 +398,17 @@ Resources:
             ASG: !Ref BatchASG
       DependsOn:
         ASGMgrRole
+  BatchNotifyTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: 'EFSBackupTopic'
+      TopicName: 'EFSBackupNotification'
+  BatchNotifySubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Endpoint: !GetAtt BatchScaleInLambda.Arn
+      Protocol: lambda
+      TopicArn: !Ref BatchNotifyTopic
 Metadata:
   'AWS::CloudFormation::Interface':
     ParameterGroups:
@@ -456,6 +418,7 @@ Metadata:
           - VPC
           - InstanceSubnets
           - SSHLocation
+          - EFSSecurityGroup
       - Label:
           default: Backup Server EC2 Configuration
         Parameters:
@@ -466,4 +429,3 @@ Metadata:
         Parameters:
           - S3Bucket
           - S3Folder
-          - BatchScaleInZip
