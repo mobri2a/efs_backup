@@ -1,16 +1,16 @@
 #!/bin/sh
 
-if [ $# -ne 1 ] ; then
-    usage
-else
-    topicarn=$1
-fi
-
 usage()  
 {  
 	 echo "Usage: $0 topicarn"  
 	 exit 1  
 } 
+
+if [ $# -ne 1 ] ; then
+    usage
+else
+    topicarn=$1
+fi
 
 LANG=C DOW=$(date +"%a")
 DATE=`date +%Y-%m-%d`

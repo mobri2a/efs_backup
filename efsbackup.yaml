@@ -246,10 +246,10 @@ Resources:
                     - '/*'
       Roles:
         - !Ref BatchRole
-  WebsiteRW:
+  S3BackupRW:
     Type: "AWS::IAM::Policy"
     Properties: 
-      PolicyName: WebSiteRW
+      PolicyName: S3BackupRW
       PolicyDocument: 
         Version: 2012-10-17
         Statement:
@@ -313,7 +313,7 @@ Resources:
             Action:
               - 'sns:Publish'
             Resource:
-              - 'arn:aws:sns:us-west-2:123412341234:BatchStatus'
+              - !Ref BatchNotifyTopic
       Roles:
         - !Ref BatchRole 
   BatchSecurityGroup:
